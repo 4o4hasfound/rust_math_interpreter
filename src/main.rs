@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::{ self, Write };
 
+use crate::debug::print_debug_vars;
+use crate::error::Error;
 use crate::evaluater::EvalResultType;
-use crate::{evaluater::evaluate_expr, value::Value};
+use crate::{ evaluater::evaluate_expr, value::Value };
 
 mod error;
 mod evaluater;
@@ -12,23 +14,19 @@ mod parser;
 mod span;
 mod token;
 mod value;
+mod debug;
+mod functions;
 
-pub fn print_error(src: &str, err: &span::Spanned<error::Error>) {
+fn print_error(src: &str, err: &span::Spanned<error::Error>) {
     match &err.data {
         error::Error::LexingError(err) => {
-            println!(
-                "Lexing Error: {}",
-                error::lexing_error::error_to_string(err.clone())
-            )
+            println!("Lexing Error: {}", error::lexing_error::error_to_string(err.clone()));
         }
         error::Error::EvalError(err) => {
-            println!(
-                "Evaluation Error: {}",
-                error::eval_error::error_to_string(err.clone())
-            )
+            println!("Evaluation Error: {}", error::eval_error::error_to_string(err.clone()));
         }
         _ => {}
-    };
+    }
 
     const MAX_WIDTH: usize = 50;
 
@@ -38,7 +36,6 @@ pub fn print_error(src: &str, err: &span::Spanned<error::Error>) {
     let span_start = span.start.min(src_len);
     let span_end = (span.end - 1).min(src_len);
 
-    // Anchor window at the middle of the span
     let mid = (span_start + span_end) / 2;
     let half = MAX_WIDTH / 2;
 
@@ -69,28 +66,53 @@ pub fn print_error(src: &str, err: &span::Spanned<error::Error>) {
     println!("{}", marker);
 }
 
-pub fn print_debug_vars(vars: &HashMap<String, Value>) {
-    println!("Variables:");
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandResult {
+    End,
+    Continue,
+    None,
+}
 
-    if vars.is_empty() {
-        println!("  <empty>");
-        return;
-    }
-
-    let mut keys: Vec<_> = vars.keys().collect();
-    keys.sort();
-
-    for key in keys {
-        if let Some(value) = vars.get(key) {
-            println!("  {} = {:?}", key, value);
+fn eval_command(
+    input: &String,
+    vars: &mut HashMap<String, Value>,
+    _functions: &HashMap<String, Box<fn(&Vec<Value>) -> Result<Value, Error>>>
+) -> CommandResult {
+    if input.to_lowercase().starts_with("[exit]") {
+        CommandResult::End
+    } else if input.to_lowercase().starts_with("[variables]") {
+        print_debug_vars(&vars);
+        CommandResult::Continue
+    } else if input.to_lowercase().starts_with("[clear]") {
+        vars.clear();
+        CommandResult::Continue
+    } else if input.to_lowercase().starts_with("[del]") {
+        let v = input.split("]").collect::<Vec<&str>>();
+        if v.len() >= 2 {
+            let s = v[1].strip_suffix("\r\n");
+            if let Some(var_name0) = s && let Some(var_name1) = var_name0.strip_prefix(' ') {
+                vars.remove(var_name1);
+            }
         }
+        CommandResult::Continue
+    } else {
+        CommandResult::None
     }
 }
 
 fn main() {
     let mut vars: HashMap<String, Value> = HashMap::new();
-    let mut functions: HashMap<String, Box<dyn Fn(Vec<Value>) -> Result<Value, error::Error>>> =
-        HashMap::new();
+    type Func = fn(&Vec<Value>) -> Result<Value, error::Error>;
+    let functions: HashMap<
+        String,
+        Box<fn(&Vec<Value>) -> Result<Value, error::Error>>
+    > = HashMap::from([
+        ("any".to_string(), Box::new(functions::any as Func)),
+        ("all".to_string(), Box::new(functions::all as Func)),
+        ("max".to_string(), Box::new(functions::max as Func)),
+        ("min".to_string(), Box::new(functions::min as Func)),
+        ("clamp".to_string(), Box::new(functions::clamp as Func)),
+    ]);
     let mut user_def_functions = HashMap::new();
 
     loop {
@@ -100,31 +122,12 @@ fn main() {
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
 
-        if input.to_lowercase().starts_with("[exit]") {
+        let command_res = eval_command(&input, &mut vars, &functions);
+
+        if command_res == CommandResult::Continue {
+            continue;
+        } else if command_res == CommandResult::End {
             break;
-        }
-
-        if input.to_lowercase().starts_with("[variables]") {
-            print_debug_vars(&vars);
-            continue;
-        }
-
-        if input.to_lowercase().starts_with("[clear]") {
-            vars.clear();
-            continue;
-        }
-
-        if input.to_lowercase().starts_with("[del]") {
-            let v = input.split("]").collect::<Vec<&str>>();
-            if v.len() >= 2 {
-                let s = v[1].strip_suffix("\r\n");
-                if let Some(var_name0) = s
-                    && let Some(var_name1) = var_name0.strip_prefix(' ')
-                {
-                    vars.remove(var_name1);
-                }
-            }
-            continue;
         }
 
         let debug: bool;
@@ -151,7 +154,7 @@ fn main() {
                     Some(Value::Int(i)) => println!("{}", i),
                     Some(Value::Float(f)) => println!("{}", f),
                     _ => {}
-                };
+                }
             } else {
                 print_error(&input, &result.unwrap_err());
             }

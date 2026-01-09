@@ -1,41 +1,41 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
-    Not,        // !
-    Negation,   // -
+    Not, // !
+    Negation, // -
     BitwiseNot, // ~
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
-    Addition,       // +
-    Subtraction,    // -
+    Addition, // +
+    Subtraction, // -
     Multiplication, // *
-    Division,       // /
-    Modulo,         // %
+    Division, // /
+    Modulo, // %
     Exponentiation, // **
-    And,            // &&
-    Or,             // ||
-    BitwiseAnd,     // &
-    BitwiseOr,      // |
-    BitwiseXor,     // ^
+    And, // &&
+    Or, // ||
+    BitwiseAnd, // &
+    BitwiseOr, // |
+    BitwiseXor, // ^
 
-    Equal,        // ==
-    NotEqual,     // !=
-    Less,         // <
-    Greater,      // >
-    LessEqual,    // <=
+    Equal, // ==
+    NotEqual, // !=
+    Less, // <
+    Greater, // >
+    LessEqual, // <=
     GreaterEqual, // >=
 
-    Assign,       // =
-    AddAssign,    // +=
-    SubAssign,    // -=
-    MulAssign,    // *=
-    DivAssign,    // /=
-    ModAssign,    // %=
-    AndAssign,    // &&=
-    OrAssign,     // ||=
+    Assign, // =
+    AddAssign, // +=
+    SubAssign, // -=
+    MulAssign, // *=
+    DivAssign, // /=
+    ModAssign, // %=
+    AndAssign, // &&=
+    OrAssign, // ||=
     BitAndAssign, // &=
-    BitOrAssign,  // |=
+    BitOrAssign, // |=
     BitXorAssign, // ^=
 }
 
@@ -47,9 +47,9 @@ pub enum TernaryOp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GroupingOp {
-    LeftParen,  // (
+    LeftParen, // (
     RightParen, // )
-    Comma,      // ,
+    Comma, // ,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,45 +60,7 @@ pub enum Operator {
     Grouping(GroupingOp),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arity {
-    Unary,
-    Binary,
-    Ternary,
-    Grouping,
-}
-
 impl Operator {
-    pub fn arity(self) -> Arity {
-        match self {
-            Operator::Unary(_) => Arity::Unary,
-            Operator::Binary(_) => Arity::Binary,
-            Operator::TernaryOp(_) => Arity::Ternary,
-            Operator::Grouping(_) => Arity::Grouping,
-        }
-    }
-
-    pub fn as_unary(self) -> Option<UnaryOp> {
-        match self {
-            Operator::Unary(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    pub fn as_binary(self) -> Option<BinaryOp> {
-        match self {
-            Operator::Binary(op) => Some(op),
-            _ => None,
-        }
-    }
-
-    pub fn as_grouping(self) -> Option<GroupingOp> {
-        match self {
-            Operator::Grouping(op) => Some(op),
-            _ => None,
-        }
-    }
-
     pub fn symbol(self) -> &'static str {
         match self {
             Operator::Unary(UnaryOp::Not) => "!",

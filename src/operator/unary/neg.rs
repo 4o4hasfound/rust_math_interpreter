@@ -10,6 +10,5 @@ pub fn apply(value: &Value) -> Result<(Value, bool), Error> {
         })),
         Value::Int(a) => Ok((Value::Int(-a), false)),
         Value::Float(a) => Ok((Value::Float(-a), false)),
-        _ => Err(Error::UnexpectedError),
     }
 }

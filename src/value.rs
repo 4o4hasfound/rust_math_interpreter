@@ -1,7 +1,6 @@
-use crate::error::{Error, EvalError};
+use crate::error::{ Error, EvalError };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-
 pub enum ValueType {
     Int,
     Float,
@@ -14,7 +13,6 @@ impl ValueType {
             ValueType::Boolean => 0,
             ValueType::Int => 1,
             ValueType::Float => 2,
-            _ => -1,
         }
     }
 }
@@ -50,8 +48,6 @@ impl Value {
             (Value::Boolean(v), ValueType::Float) => {
                 Some(Value::Float(if *v { 1f64 } else { 0f64 }))
             }
-
-            _ => None,
         }
     }
 
@@ -111,12 +107,11 @@ impl Value {
             Value::Boolean(b) => b.to_string(),
             Value::Int(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
-            _ => String::new(),
         }
     }
 }
 
-pub fn unify(values: &[&Value]) -> Result<Vec<Value>, Error> {
+pub fn unify(values: &[Value]) -> Result<Vec<Value>, Error> {
     if values.is_empty() {
         Ok(Vec::new())
     } else {
@@ -126,28 +121,70 @@ pub fn unify(values: &[&Value]) -> Result<Vec<Value>, Error> {
             .max_by_key(|v| v.rank())
             .unwrap();
 
-        let promoted = values.iter().cloned().map(|v| v.promote(target)).collect();
+        let promoted = values
+            .iter()
+            .cloned()
+            .map(|v| v.promote(target))
+            .collect();
 
         match promoted {
             Some(v) => Ok(v),
-            None => Err(Error::EvalError(EvalError::UnableToUnify {
-                values: Vec::from_iter(values.iter().map(|v| (*v).clone())),
-            })),
+            None =>
+                Err(
+                    Error::EvalError(EvalError::UnableToUnify {
+                        values: Vec::from_iter(values.iter().map(|v| (*v).clone())),
+                    })
+                ),
         }
     }
 }
 
-pub fn unify_to(values: &[&Value], target: ValueType) -> Result<Vec<Value>, Error> {
+pub fn unify_to(values: &[Value], target: ValueType) -> Result<Vec<Value>, Error> {
     if values.is_empty() {
         Ok(Vec::new())
     } else {
-        let promoted = values.iter().cloned().map(|v| v.promote(target)).collect();
+        let promoted = values
+            .iter()
+            .cloned()
+            .map(|v| v.promote(target))
+            .collect();
 
         match promoted {
             Some(v) => Ok(v),
-            None => Err(Error::EvalError(EvalError::UnableToUnify {
-                values: Vec::from_iter(values.iter().map(|v| (*v).clone())),
-            })),
+            None =>
+                Err(
+                    Error::EvalError(EvalError::UnableToUnify {
+                        values: Vec::from_iter(values.iter().map(|v| (*v).clone())),
+                    })
+                ),
+        }
+    }
+}
+
+pub fn unify_ret_type(values: &[Value]) -> Result<(Vec<Value>, ValueType), Error> {
+    if values.is_empty() {
+        Ok((Vec::new(), ValueType::Boolean)) // dummy
+    } else {
+        let target = values
+            .iter()
+            .map(|v| v.value_type())
+            .max_by_key(|v| v.rank())
+            .unwrap();
+
+        let promoted = values
+            .iter()
+            .cloned()
+            .map(|v| v.promote(target))
+            .collect();
+
+        match promoted {
+            Some(v) => Ok((v, target)),
+            None =>
+                Err(
+                    Error::EvalError(EvalError::UnableToUnify {
+                        values: Vec::from_iter(values.iter().map(|v| (*v).clone())),
+                    })
+                ),
         }
     }
 }

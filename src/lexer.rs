@@ -1,7 +1,7 @@
 use crate::{
-    error::{Error, LexingError},
-    operator::{BinaryOp, GroupingOp, Operator, TernaryOp},
-    span::{Span, Spanned},
+    error::{ Error, LexingError },
+    operator::{ BinaryOp, GroupingOp, Operator, TernaryOp, UnaryOp },
+    span::{ Span, Spanned },
     token::Token,
     value::Value,
 };
@@ -44,12 +44,6 @@ impl<'a> Cursor<'a> {
     }
 }
 
-fn lex_ws(cursor: &mut Cursor) -> bool {
-    let start = cursor.i;
-    cursor.skip_while(|c| c.is_ascii_whitespace());
-    cursor.i != start
-}
-
 fn lex_operator(cursor: &mut Cursor) -> Option<Spanned<Token>> {
     let s = cursor.rest();
 
@@ -67,6 +61,20 @@ fn lex_operator(cursor: &mut Cursor) -> Option<Spanned<Token>> {
             data: Token::Operator(Operator::Binary(BinaryOp::OrAssign)),
         });
     }
+    if s.starts_with("&&") {
+        cursor.advance(2);
+        return Some(Spanned {
+            span: Span::from(cursor.i - 2, 2),
+            data: Token::Operator(Operator::Binary(BinaryOp::And)),
+        });
+    }
+    if s.starts_with("||") {
+        cursor.advance(2);
+        return Some(Spanned {
+            span: Span::from(cursor.i - 2, 2),
+            data: Token::Operator(Operator::Binary(BinaryOp::Or)),
+        });
+    }
     if s.starts_with("**") {
         cursor.advance(2);
         return Some(Spanned {
@@ -79,6 +87,13 @@ fn lex_operator(cursor: &mut Cursor) -> Option<Spanned<Token>> {
         return Some(Spanned {
             span: Span::from(cursor.i - 2, 2),
             data: Token::Operator(Operator::Binary(BinaryOp::Equal)),
+        });
+    }
+    if s.starts_with("!=") {
+        cursor.advance(2);
+        return Some(Spanned {
+            span: Span::from(cursor.i - 2, 2),
+            data: Token::Operator(Operator::Binary(BinaryOp::NotEqual)),
         });
     }
     if s.starts_with("<=") {
@@ -153,6 +168,20 @@ fn lex_operator(cursor: &mut Cursor) -> Option<Spanned<Token>> {
     }
 
     match cursor.peek()? {
+        b'!' => {
+            cursor.advance(1);
+            Some(Spanned {
+                span: Span::single(cursor.i - 1),
+                data: Token::Operator(Operator::Unary(UnaryOp::Not)),
+            })
+        }
+        b'~' => {
+            cursor.advance(1);
+            Some(Spanned {
+                span: Span::single(cursor.i - 1),
+                data: Token::Operator(Operator::Unary(UnaryOp::BitwiseNot)),
+            })
+        }
         b'+' => {
             cursor.advance(1);
             Some(Spanned {
@@ -301,7 +330,7 @@ fn lex_value(cursor: &mut Cursor) -> Option<Spanned<Token>> {
         i += 1;
     }
 
-    while s.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'_') {
+    while s.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'_' ) {
         if s[i] != b'_' {
             num_str.push(s[i] as char);
         }
@@ -314,9 +343,7 @@ fn lex_value(cursor: &mut Cursor) -> Option<Spanned<Token>> {
         seen_fpoint = true;
         i += 1;
 
-        while let Some(&c) = s.get(i)
-            && (c.is_ascii_digit() || c == b'_')
-        {
+        while let Some(&c) = s.get(i) && (c.is_ascii_digit() || c == b'_') {
             if s[i] != b'_' {
                 num_str.push(s[i] as char);
             }
@@ -351,14 +378,10 @@ fn lex_identifier(cursor: &mut Cursor) -> Option<Spanned<Token>> {
     let s = sr.as_bytes();
     let mut i = 0usize;
 
-    if let Some(&c) = s.get(0)
-        && (c.is_ascii_alphabetic() || c == b'_')
-    {
+    if let Some(&c) = s.get(0) && (c.is_ascii_alphabetic() || c == b'_') {
         i += 1;
 
-        while let Some(&c) = s.get(i)
-            && (c.is_ascii_alphanumeric() || c == b'_')
-        {
+        while let Some(&c) = s.get(i) && (c.is_ascii_alphanumeric() || c == b'_') {
             i += 1;
         }
     } else {

@@ -1,9 +1,9 @@
 use crate::{
-    error::{Error, EvalError, NameKind},
+    error::{ Error, EvalError, NameKind },
     operator::*,
     parser::Expr,
-    span::{Span, Spanned},
-    value::{Value, ValueType},
+    span::{ Span, Spanned },
+    value::{ Value, ValueType },
 };
 
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ impl<'a> EvalResult<'a> {
 
 fn is_assign(op: Operator) -> bool {
     match op {
-        Operator::Binary(BinaryOp::Assign)
+        | Operator::Binary(BinaryOp::Assign)
         | Operator::Binary(BinaryOp::AddAssign)
         | Operator::Binary(BinaryOp::SubAssign)
         | Operator::Binary(BinaryOp::MulAssign)
@@ -64,7 +64,7 @@ pub fn evaluate_expr<'a>(
     expr: &Spanned<Expr>,
     variables: &'a mut HashMap<String, Value>,
     user_def_functions: &'a mut HashMap<String, Box<Expr>>,
-    functions: &HashMap<String, impl Fn(Vec<Value>) -> Result<Value, Error>>,
+    functions: &HashMap<String, Box<fn(&Vec<Value>) -> Result<Value, Error>>>
 ) -> Result<EvalResult<'a>, Spanned<Error>> {
     match &expr.data {
         Expr::Value(v) => Ok(EvalResult::Value(*v)),
@@ -87,229 +87,275 @@ pub fn evaluate_expr<'a>(
 
             if !is_assign(*op) {
                 l = evaluate_expr(&lhs, variables, user_def_functions, functions)?;
-                left = match l.result_type() {
-                    EvalResultType::Value => l.as_value(),
-                    EvalResultType::Ref => l.as_ref().cloned(),
-                }
-                .ok_or(Spanned {
+                left = (
+                    match l.result_type() {
+                        EvalResultType::Value => l.as_value(),
+                        EvalResultType::Ref => l.as_ref().cloned(),
+                    }
+                ).ok_or(Spanned {
                     span: expr.span,
                     data: Error::UnexpectedError,
                 })?;
             } else {
                 left = Value::Boolean(false); // dummy
-                l = EvalResult::Value(left);
             }
 
             let mut r = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
-            let right = match r.result_type() {
-                EvalResultType::Value => r.as_value(),
-                EvalResultType::Ref => r.as_ref().cloned(),
-            }
-            .ok_or(Spanned {
+            let right = (
+                match r.result_type() {
+                    EvalResultType::Value => r.as_value(),
+                    EvalResultType::Ref => r.as_ref().cloned(),
+                }
+            ).ok_or(Spanned {
                 span: expr.span,
                 data: Error::UnexpectedError,
             })?;
 
-            let result = match op {
-                Operator::Binary(BinaryOp::Addition) => add::apply(&left, &right),
-                Operator::Binary(BinaryOp::Subtraction) => sub::apply(&left, &right),
-                Operator::Binary(BinaryOp::Multiplication) => mul::apply(&left, &right),
-                Operator::Binary(BinaryOp::Division) => div::apply(&left, &right),
-                Operator::Binary(BinaryOp::Modulo) => modulo::apply(&left, &right),
-                Operator::Binary(BinaryOp::Exponentiation) => exp::apply(&left, &right),
-                Operator::Binary(BinaryOp::And) => and::apply(&left, &right),
-                Operator::Binary(BinaryOp::Or) => or::apply(&left, &right),
-                Operator::Binary(BinaryOp::BitwiseAnd) => bit_and::apply(&left, &right),
-                Operator::Binary(BinaryOp::BitwiseOr) => bit_or::apply(&left, &right),
-                Operator::Binary(BinaryOp::BitwiseXor) => bit_xor::apply(&left, &right),
+            let result = (
+                match op {
+                    Operator::Binary(BinaryOp::Addition) => add::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Subtraction) => sub::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Multiplication) => mul::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Division) => div::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Modulo) => modulo::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Exponentiation) => exp::apply(&left, &right),
+                    Operator::Binary(BinaryOp::And) => and::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Or) => or::apply(&left, &right),
+                    Operator::Binary(BinaryOp::BitwiseAnd) => bit_and::apply(&left, &right),
+                    Operator::Binary(BinaryOp::BitwiseOr) => bit_or::apply(&left, &right),
+                    Operator::Binary(BinaryOp::BitwiseXor) => bit_xor::apply(&left, &right),
 
-                Operator::Binary(BinaryOp::Assign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.entry(name.clone()).or_insert_with(|| {
-                            match right.value_type() {
-                                ValueType::Boolean => Value::Boolean(false),
-                                ValueType::Int => Value::Int(0),
-                                ValueType::Float => Value::Float(0.0),
+                    Operator::Binary(BinaryOp::Assign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.entry(name.clone()).or_insert_with(|| {
+                                    match right.value_type() {
+                                        ValueType::Boolean => Value::Boolean(false),
+                                        ValueType::Int => Value::Int(0),
+                                        ValueType::Float => Value::Float(0.0),
+                                    }
+                                });
+
+                                assign::apply(slot, &right)
                             }
-                        });
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // =
+                    Operator::Binary(BinaryOp::AddAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // =
-                Operator::Binary(BinaryOp::AddAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                add_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // +=
+                    Operator::Binary(BinaryOp::SubAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        add_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // +=
-                Operator::Binary(BinaryOp::SubAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                sub_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // -=
+                    Operator::Binary(BinaryOp::MulAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        sub_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // -=
-                Operator::Binary(BinaryOp::MulAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                mul_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // *=
+                    Operator::Binary(BinaryOp::DivAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        mul_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // *=
-                Operator::Binary(BinaryOp::DivAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                div_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // /=
+                    Operator::Binary(BinaryOp::ModAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        div_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // /=
-                Operator::Binary(BinaryOp::ModAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                mod_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // %=
+                    Operator::Binary(BinaryOp::AndAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        mod_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // %=
-                Operator::Binary(BinaryOp::AndAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                and_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // &&=
+                    Operator::Binary(BinaryOp::OrAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        and_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // &&=
-                Operator::Binary(BinaryOp::OrAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                or_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // ||=
+                    Operator::Binary(BinaryOp::BitAndAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        or_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // ||=
-                Operator::Binary(BinaryOp::BitAndAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                bitand_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // &=
+                    Operator::Binary(BinaryOp::BitOrAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        bitand_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // &=
-                Operator::Binary(BinaryOp::BitOrAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                bitor_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // |=
+                    Operator::Binary(BinaryOp::BitXorAssign) =>
+                        match &(**lhs).data {
+                            Expr::Identifier(name) => {
+                                let slot = variables.get_mut(name).ok_or(Spanned {
+                                    span: expr.span,
+                                    data: Error::EvalError(EvalError::NameNotFound {
+                                        kind: NameKind::Variable,
+                                        name: name.clone(),
+                                    }),
+                                })?;
 
-                        bitor_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // |=
-                Operator::Binary(BinaryOp::BitXorAssign) => match &(**lhs).data {
-                    Expr::Identifier(name) => {
-                        let slot = variables.get_mut(name).ok_or(Spanned {
-                            span: expr.span,
-                            data: Error::EvalError(EvalError::NameNotFound {
-                                kind: NameKind::Variable,
-                                name: name.clone(),
-                            }),
-                        })?;
+                                bitxor_assign::apply(slot, &right)
+                            }
+                            _ =>
+                                Err(
+                                    Error::EvalError(EvalError::NotAssignable {
+                                        op: Operator::Binary(BinaryOp::Assign),
+                                    })
+                                ),
+                        } // ^=
 
-                        bitxor_assign::apply(slot, &right)
-                    }
-                    _ => Err(Error::EvalError(EvalError::NotAssignable {
-                        op: Operator::Binary(BinaryOp::Assign),
-                    })),
-                }, // ^=
+                    Operator::Binary(BinaryOp::Equal) => equal::apply(&left, &right),
+                    Operator::Binary(BinaryOp::NotEqual) => nequal::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Less) => less::apply(&left, &right),
+                    Operator::Binary(BinaryOp::LessEqual) => lequal::apply(&left, &right),
+                    Operator::Binary(BinaryOp::Greater) => greater::apply(&left, &right),
+                    Operator::Binary(BinaryOp::GreaterEqual) => gequal::apply(&left, &right),
 
-                Operator::Binary(BinaryOp::Equal) => equal::apply(&left, &right),
-                Operator::Binary(BinaryOp::NotEqual) => nequal::apply(&left, &right),
-                Operator::Binary(BinaryOp::Less) => less::apply(&left, &right),
-                Operator::Binary(BinaryOp::LessEqual) => lequal::apply(&left, &right),
-                Operator::Binary(BinaryOp::Greater) => greater::apply(&left, &right),
-                Operator::Binary(BinaryOp::GreaterEqual) => gequal::apply(&left, &right),
-
-                _ => Err(Error::UnexpectedError),
-            }
-            .map_err(|err| Spanned {
+                    _ => Err(Error::UnexpectedError),
+                }
+            ).map_err(|err| Spanned {
                 span: Span {
                     start: lhs.span.start,
                     end: rhs.span.end,
@@ -332,22 +378,24 @@ pub fn evaluate_expr<'a>(
         }
         Expr::Unary { op, rhs } => {
             let mut v = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
-            let value = match v.result_type() {
-                EvalResultType::Value => v.as_value(),
-                EvalResultType::Ref => v.as_ref().cloned(),
-            }
-            .ok_or(Spanned {
+            let value = (
+                match v.result_type() {
+                    EvalResultType::Value => v.as_value(),
+                    EvalResultType::Ref => v.as_ref().cloned(),
+                }
+            ).ok_or(Spanned {
                 span: Span::merge(&expr.span, &rhs.span),
                 data: Error::UnexpectedError,
             })?;
 
-            let result = match op {
-                Operator::Unary(UnaryOp::Not) => not::apply(&value),
-                Operator::Unary(UnaryOp::Negation) => neg::apply(&value),
-                Operator::Unary(UnaryOp::BitwiseNot) => bit_not::apply(&value),
-                _ => Err(Error::UnexpectedError),
-            }
-            .map_err(|err| Spanned {
+            let result = (
+                match op {
+                    Operator::Unary(UnaryOp::Not) => not::apply(&value),
+                    Operator::Unary(UnaryOp::Negation) => neg::apply(&value),
+                    Operator::Unary(UnaryOp::BitwiseNot) => bit_not::apply(&value),
+                    _ => Err(Error::UnexpectedError),
+                }
+            ).map_err(|err| Spanned {
                 span: Span::merge(&expr.span, &rhs.span),
                 data: err,
             })?;
@@ -365,24 +413,22 @@ pub fn evaluate_expr<'a>(
                 Ok(EvalResult::Value(result.0))
             }
         }
-        Expr::Ternary {
-            cond,
-            statement1,
-            statement2,
-        } => {
+        Expr::Ternary { cond, statement1, statement2 } => {
             let mut cond_v = evaluate_expr(&cond, variables, user_def_functions, functions)?;
-            let cond_value = match cond_v.result_type() {
-                EvalResultType::Value => cond_v.as_value(),
-                EvalResultType::Ref => cond_v.as_ref().cloned(),
-            }
-            .ok_or(Error::UnexpectedError)
-            .map_err(|err| Spanned {
-                span: Span {
-                    start: cond.span.start,
-                    end: statement2.span.end,
-                },
-                data: err,
-            })?;
+            let cond_value = (
+                match cond_v.result_type() {
+                    EvalResultType::Value => cond_v.as_value(),
+                    EvalResultType::Ref => cond_v.as_ref().cloned(),
+                }
+            )
+                .ok_or(Error::UnexpectedError)
+                .map_err(|err| Spanned {
+                    span: Span {
+                        start: cond.span.start,
+                        end: statement2.span.end,
+                    },
+                    data: err,
+                })?;
 
             let cond_bool = cond_value
                 .promote(ValueType::Boolean)
@@ -411,59 +457,57 @@ pub fn evaluate_expr<'a>(
                 })
             }
         }
-        Expr::Call { func, args } => match &func.data {
-            Expr::Identifier(s) => {
-                let f = functions.get(s).ok_or(Spanned {
-                    span: Span {
-                        start: func.span.start,
-                        end: if let Some(e) = args.last() {
-                            e.span.end
-                        } else {
-                            func.span.end
+        Expr::Call { func, args } =>
+            match &func.data {
+                Expr::Identifier(s) => {
+                    let f = functions.get(s).ok_or(Spanned {
+                        span: Span {
+                            start: func.span.start,
+                            end: if let Some(e) = args.last() {
+                                e.span.end
+                            } else {
+                                func.span.end
+                            },
                         },
-                    },
-                    data: Error::EvalError(EvalError::NameNotFound {
-                        kind: NameKind::Function,
-                        name: s.to_string(),
-                    }),
-                })?;
+                        data: Error::EvalError(EvalError::NameNotFound {
+                            kind: NameKind::Function,
+                            name: s.to_string(),
+                        }),
+                    })?;
 
-                let mut v = Vec::new();
+                    let mut v = Vec::new();
 
-                for in_arg in args.iter() {
-                    let res = evaluate_expr(&in_arg, variables, user_def_functions, functions);
+                    for in_arg in args.iter() {
+                        let res = evaluate_expr(&in_arg, variables, user_def_functions, functions);
 
-                    if let Err(err) = res {
-                        return Err(err);
-                    } else if let Ok(r) = res {
-                        match r {
-                            EvalResult::Value(res_val) => v.push(res_val),
-                            EvalResult::Ref(res_ref) => v.push(res_ref.clone()),
-                        };
+                        if let Err(err) = res {
+                            return Err(err);
+                        } else if let Ok(r) = res {
+                            match r {
+                                EvalResult::Value(res_val) => v.push(res_val),
+                                EvalResult::Ref(res_ref) => v.push(res_ref.clone()),
+                            }
+                        }
                     }
-                }
 
-                let result = f(v).map_err(|err| Spanned {
-                    span: Span {
-                        start: func.span.start,
-                        end: if let Some(e) = args.last() {
-                            e.span.end
-                        } else {
-                            func.span.end
+                    let result = f(&v).map_err(|err| Spanned {
+                        span: Span {
+                            start: func.span.start,
+                            end: if let Some(e) = args.last() {
+                                e.span.end
+                            } else {
+                                func.span.end
+                            },
                         },
-                    },
-                    data: err,
-                })?;
-                Ok(EvalResult::Value(result))
+                        data: err,
+                    })?;
+                    Ok(EvalResult::Value(result))
+                }
+                _ =>
+                    Err(Spanned {
+                        span: expr.span,
+                        data: Error::UnexpectedError,
+                    }),
             }
-            _ => Err(Spanned {
-                span: expr.span,
-                data: Error::UnexpectedError,
-            }),
-        },
-        _ => Err(Spanned {
-            span: expr.span,
-            data: Error::UnexpectedError,
-        }),
     }
 }

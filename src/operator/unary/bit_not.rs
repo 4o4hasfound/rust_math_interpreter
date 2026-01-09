@@ -10,6 +10,5 @@ pub fn apply(value: &Value) -> Result<(Value, bool), Error> {
             op: Operator::Binary(BinaryOp::AddAssign),
             operand_types: Vec::from_iter([value.value_type()]),
         })),
-        _ => Err(Error::UnexpectedError),
     }
 }

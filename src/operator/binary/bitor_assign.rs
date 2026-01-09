@@ -3,7 +3,7 @@ use crate::operator::{BinaryOp, Operator};
 use crate::value::{Value, unify};
 
 pub fn apply(left: &mut Value, right: &Value) -> Result<(Value, bool), Error> {
-    match unify(&[left, right]) {
+    match unify(&[*left, *right]) {
         Ok(v) => match (v[0], v[1]) {
             (Value::Boolean(a), Value::Boolean(b)) => {
                 left.set_boolean(a || b);

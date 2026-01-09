@@ -14,7 +14,6 @@ impl Token {
             Token::Operator(s) => String::from(s.symbol()),
             Token::Value(v) => v.symbol(),
             Token::Identifier(s) => s.clone(),
-            _ => String::new(),
         }
     }
 
@@ -57,7 +56,6 @@ impl Token {
             },
             Token::Value(_) => 0,
             Token::Identifier(_) => 0,
-            _ => 0,
         }
     }
 }

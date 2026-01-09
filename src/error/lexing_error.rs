@@ -9,6 +9,5 @@ pub fn error_to_string(err: LexingError) -> String {
         LexingError::InvalidToken { src: _, index } => {
             format!("Invalid token at position {}", index)
         }
-        _ => String::new(),
     }
 }

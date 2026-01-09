@@ -1,8 +1,9 @@
 use crate::{
+    debug::{ print_debug_expr, print_debug_tokens },
     error::Error,
     lexer::lex_string,
-    operator::{BinaryOp, GroupingOp, Operator, TernaryOp, UnaryOp},
-    span::{Span, Spanned},
+    operator::{ BinaryOp, GroupingOp, Operator, TernaryOp, UnaryOp },
+    span::{ Span, Spanned },
     token::Token,
     value::Value,
 };
@@ -25,18 +26,10 @@ impl<'a> Cursor<'a> {
         self.src.get(self.i).cloned()
     }
 
-    fn peek_next(&self, n: usize) -> Option<Spanned<Token>> {
-        self.src.get(self.i + n).cloned()
-    }
-
     fn next(&mut self) -> Option<Spanned<Token>> {
         let t = self.peek()?.clone();
         self.advance(1);
         Some(t)
-    }
-
-    fn rest(&self) -> &'a [Spanned<Token>] {
-        &self.src[self.i..]
     }
 
     fn advance(&mut self, n: usize) -> bool {
@@ -45,9 +38,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn expect(&mut self, target: &Token) -> bool {
-        if let Some(t) = self.peek()
-            && t.data == *target
-        {
+        if let Some(t) = self.peek() && t.data == *target {
             self.advance(1);
             true
         } else {
@@ -82,14 +73,16 @@ pub enum Expr {
 
 fn nud(cursor: &mut Cursor, t: &Spanned<Token>) -> Option<Spanned<Expr>> {
     match &t.data {
-        Token::Value(v) => Some(Spanned {
-            span: t.span,
-            data: Expr::Value(*v),
-        }),
-        Token::Identifier(s) => Some(Spanned {
-            span: t.span,
-            data: Expr::Identifier(s.clone()),
-        }),
+        Token::Value(v) =>
+            Some(Spanned {
+                span: t.span,
+                data: Expr::Value(*v),
+            }),
+        Token::Identifier(s) =>
+            Some(Spanned {
+                span: t.span,
+                data: Expr::Identifier(s.clone()),
+            }),
 
         Token::Operator(Operator::Binary(BinaryOp::Subtraction)) => {
             let rhs = parse_expression(cursor, 70)?;
@@ -133,7 +126,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
             let lbp = Token::Operator(Operator::Binary(op)).lbp();
             let rbp: u32 = match op {
                 BinaryOp::Exponentiation => lbp - 1,
-                BinaryOp::Assign
+                | BinaryOp::Assign
                 | BinaryOp::AddAssign
                 | BinaryOp::SubAssign
                 | BinaryOp::MulAssign
@@ -162,15 +155,23 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
         Token::Operator(Operator::Grouping(GroupingOp::LeftParen)) => {
             let mut args = Vec::new();
 
-            if cursor.peek().is_some_and(|s| {
-                s.data != Token::Operator(Operator::Grouping(GroupingOp::RightParen))
-            }) {
+            if
+                cursor
+                    .peek()
+                    .is_some_and(|s| {
+                        s.data != Token::Operator(Operator::Grouping(GroupingOp::RightParen))
+                    })
+            {
                 loop {
                     args.push(parse_expression(cursor, 0)?);
 
-                    if cursor.peek().is_some_and(|s| {
-                        s.data != Token::Operator(Operator::Grouping(GroupingOp::Comma))
-                    }) {
+                    if
+                        cursor
+                            .peek()
+                            .is_some_and(|s| {
+                                s.data == Token::Operator(Operator::Grouping(GroupingOp::Comma))
+                            })
+                    {
                         cursor.advance(1);
                         continue;
                     }
@@ -178,9 +179,13 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
                 }
             }
 
-            if cursor.peek().is_some_and(|s| {
-                s.data != Token::Operator(Operator::Grouping(GroupingOp::RightParen))
-            }) {
+            if
+                cursor
+                    .peek()
+                    .is_some_and(|s| {
+                        s.data == Token::Operator(Operator::Grouping(GroupingOp::RightParen))
+                    })
+            {
                 cursor.advance(1);
                 Some(Spanned {
                     span: Span {
@@ -202,9 +207,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
             let rbp: u32 = lbp - 1;
 
             let statement1 = parse_expression(cursor, 0)?;
-            if !cursor.expect(&Token::Operator(Operator::TernaryOp(
-                TernaryOp::TernaryElse,
-            ))) {
+            if !cursor.expect(&Token::Operator(Operator::TernaryOp(TernaryOp::TernaryElse))) {
                 return None;
             }
             let statement2 = parse_expression(cursor, rbp)?;
@@ -228,7 +231,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
 
 fn starts_expression(t: &Spanned<Token>) -> bool {
     match t.data {
-        Token::Value(_)
+        | Token::Value(_)
         | Token::Identifier(_)
         | Token::Operator(Operator::Grouping(GroupingOp::LeftParen))
         | Token::Operator(Operator::Unary(UnaryOp::Negation))
@@ -245,9 +248,10 @@ fn parse_expression(cursor: &mut Cursor, min_bp: u32) -> Option<Spanned<Expr>> {
     let mut left = nud(cursor, &t)?;
 
     while let Some(t) = cursor.peek() {
-        if starts_expression(&t)
-            && !matches!(left.data, Expr::Identifier(_))
-            && IMPLICIT_MUL_LBP > min_bp
+        if
+            starts_expression(&t) &&
+            !matches!(left.data, Expr::Identifier(_)) &&
+            IMPLICIT_MUL_LBP > min_bp
         {
             let rhs = parse_expression(cursor, IMPLICIT_MUL_LBP)?;
             left = Spanned {
@@ -289,11 +293,7 @@ pub fn recompute_expr_span(expr: &mut Spanned<Expr>) {
             Span::merge(&lhs.span, &rhs.span)
         }
 
-        Expr::Ternary {
-            cond,
-            statement1,
-            statement2,
-        } => {
+        Expr::Ternary { cond, statement1, statement2 } => {
             recompute_expr_span(cond);
             recompute_expr_span(statement1);
             recompute_expr_span(statement2);
@@ -312,87 +312,9 @@ pub fn recompute_expr_span(expr: &mut Spanned<Expr>) {
 
             span
         }
-
-        _ => expr.span,
     };
 
     expr.span = new_span;
-}
-
-pub fn print_debug_expr(expr: Spanned<Expr>) {
-    fn walk(e: &Spanned<Expr>, indent: usize) {
-        let pad = "  ".repeat(indent);
-        let span = e.span;
-
-        match &e.data {
-            Expr::Value(v) => {
-                println!("{pad}Value {:?} @ {}..{}", v, span.start, span.end - 1);
-            }
-            Expr::Identifier(name) => {
-                println!(
-                    "{pad}Identifier {:?} @ {}..{}",
-                    name,
-                    span.start,
-                    span.end - 1
-                );
-            }
-            Expr::Binary { op, lhs, rhs } => {
-                println!("{pad}Binary {:?} @ {}..{}", op, span.start, span.end - 1);
-                println!("{pad}  lhs:");
-                walk(lhs, indent + 2);
-                println!("{pad}  rhs:");
-                walk(rhs, indent + 2);
-            }
-            Expr::Unary { op, rhs } => {
-                println!("{pad}Unary {:?} @ {}..{}", op, span.start, span.end - 1);
-                println!("{pad}  rhs:");
-                walk(rhs, indent + 2);
-            }
-            Expr::Ternary {
-                cond,
-                statement1,
-                statement2,
-            } => {
-                println!("{pad}Ternary @ {}..{}", span.start, span.end - 1);
-                println!("{pad}  cond:");
-                walk(cond, indent + 2);
-                println!("{pad}  then:");
-                walk(statement1, indent + 2);
-                println!("{pad}  else:");
-                walk(statement2, indent + 2);
-            }
-            Expr::Call { func, args } => {
-                println!("{pad}Call @ {}..{}", span.start, span.end - 1);
-                println!("{pad}  func:");
-                walk(func, indent + 2);
-
-                println!("{pad}  args ({}):", args.len());
-                for (i, a) in args.iter().enumerate() {
-                    println!("{pad}    [{i}]:");
-                    walk(a, indent + 3);
-                }
-            }
-            other => {
-                println!("{pad}{other:?} @ {}..{}", span.start, span.end - 1);
-            }
-        }
-    }
-
-    walk(&expr, 0);
-}
-
-pub fn print_debug_tokens(tokens: &[Spanned<Token>]) {
-    println!("Tokens:");
-
-    for (i, t) in tokens.iter().enumerate() {
-        println!(
-            "  [{:02}] {:<20} @ {}..{}",
-            i,
-            t.data.symbol(),
-            t.span.start,
-            t.span.end - 1
-        );
-    }
 }
 
 pub fn parse_string(s: &str, debug: bool) -> Result<Box<Spanned<Expr>>, Spanned<Error>> {
@@ -414,9 +336,10 @@ pub fn parse_string(s: &str, debug: bool) -> Result<Box<Spanned<Expr>>, Spanned<
             }
             Ok(Box::from(e))
         }
-        None => Err(Spanned {
-            span: Span { start: 0, end: 0 },
-            data: Error::UnexpectedError,
-        }),
+        None =>
+            Err(Spanned {
+                span: Span { start: 0, end: 0 },
+                data: Error::UnexpectedError,
+            }),
     }
 }

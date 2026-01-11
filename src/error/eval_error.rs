@@ -10,6 +10,7 @@ pub enum Arity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum NameKind {
     Function,
+    Macro,
     Variable,
     // add more if you need them
 }

@@ -1,7 +1,49 @@
-use crate::{
-    error::{ Error, EvalError },
-    value::{ Value, ValueType, unify_ret_type, unify_to },
-};
+use crate::{ error::{ Error, EvalError }, value::{ Value, ValueType, unify_ret_type, unify_to } };
+
+pub fn to_bool(input: &Vec<Value>) -> Result<Value, Error> {
+    if input.len() != 1 {
+        Err(
+            Error::EvalError(EvalError::ArityMismatch {
+                func: "to_bool".to_string(),
+                expected: 1,
+                found: input.len(),
+            })
+        )
+    } else {
+        let value = input[0].promote(ValueType::Boolean).unwrap();
+        Ok(value)
+    }
+}
+
+pub fn to_int(input: &Vec<Value>) -> Result<Value, Error> {
+    if input.len() != 1 {
+        Err(
+            Error::EvalError(EvalError::ArityMismatch {
+                func: "to_int".to_string(),
+                expected: 1,
+                found: input.len(),
+            })
+        )
+    } else {
+        let value = input[0].promote(ValueType::Int).unwrap();
+        Ok(value)
+    }
+}
+
+pub fn to_float(input: &Vec<Value>) -> Result<Value, Error> {
+    if input.len() != 1 {
+        Err(
+            Error::EvalError(EvalError::ArityMismatch {
+                func: "to_float".to_string(),
+                expected: 1,
+                found: input.len(),
+            })
+        )
+    } else {
+        let value = input[0].promote(ValueType::Float).unwrap();
+        Ok(value)
+    }
+}
 
 pub fn any(input: &Vec<Value>) -> Result<Value, Error> {
     let promoted = unify_to(input, ValueType::Boolean)?;

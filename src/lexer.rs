@@ -330,7 +330,7 @@ fn lex_value(cursor: &mut Cursor) -> Option<Spanned<Token>> {
         i += 1;
     }
 
-    while s.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'_' ) {
+    while s.get(i).is_some_and(|c| (c.is_ascii_digit() || *c == b'_')) {
         if s[i] != b'_' {
             num_str.push(s[i] as char);
         }
@@ -373,6 +373,41 @@ fn lex_value(cursor: &mut Cursor) -> Option<Spanned<Token>> {
     }
 }
 
+fn lex_macro(cursor: &mut Cursor) -> Option<Spanned<Token>> {
+    let sr = cursor.rest();
+    let s = sr.as_bytes();
+    let mut i = 0usize;
+
+    if s.get(0) != Some(&b'{') {
+        return None;
+    }
+
+    i += 1;
+
+    if let Some(&c) = s.get(i) && (c.is_ascii_alphabetic() || c == b'_') {
+        i += 1;
+
+        while let Some(&c) = s.get(i) && (c.is_ascii_alphanumeric() || c == b'_') {
+            i += 1;
+        }
+    } else {
+        return None;
+    }
+
+    if i == 1 || s.get(i) != Some(&b'}') {
+        return None;
+    }
+
+    i += 1;
+
+    cursor.advance(i);
+
+    Some(Spanned {
+        span: Span::from(cursor.i - i + 1, i - 1),
+        data: Token::Macro(sr[1..i - 1].to_string()),
+    })
+}
+
 fn lex_identifier(cursor: &mut Cursor) -> Option<Spanned<Token>> {
     let sr = cursor.rest();
     let s = sr.as_bytes();
@@ -406,6 +441,8 @@ pub fn lex_string(s: &str) -> Result<Vec<Spanned<Token>>, Spanned<Error>> {
         if let Some(t) = lex_value(&mut cursor) {
             res.push(t);
         } else if let Some(t) = lex_operator(&mut cursor) {
+            res.push(t);
+        } else if let Some(t) = lex_macro(&mut cursor) {
             res.push(t);
         } else if let Some(t) = lex_identifier(&mut cursor) {
             res.push(t);

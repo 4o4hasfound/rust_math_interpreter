@@ -60,11 +60,18 @@ fn is_assign(op: Operator) -> bool {
     }
 }
 
+fn is_cond(op: Operator) -> bool {
+    match op {
+        Operator::Binary(BinaryOp::And) | Operator::Binary(BinaryOp::Or) => true,
+        _ => false,
+    }
+}
+
 pub fn evaluate_expr<'a>(
     expr: &Spanned<Expr>,
     variables: &'a mut HashMap<String, Value>,
-    user_def_functions: &'a mut HashMap<String, Box<Expr>>,
-    functions: &HashMap<String, Box<fn(&Vec<Value>) -> Result<Value, Error>>>
+    user_def_functions: &'a mut HashMap<String, Box<Spanned<Expr>>>,
+    functions: &HashMap<String, fn(&Vec<Value>) -> Result<Value, Error>>
 ) -> Result<EvalResult<'a>, Spanned<Error>> {
     match &expr.data {
         Expr::Value(v) => Ok(EvalResult::Value(*v)),
@@ -81,9 +88,23 @@ pub fn evaluate_expr<'a>(
                 })
             }
         }
+        Expr::Macro(s) => {
+            if let Some(v) = user_def_functions.get(s).cloned() {
+                evaluate_expr(&v, variables, user_def_functions, functions)
+            } else {
+                Err(Spanned {
+                    span: expr.span,
+                    data: Error::EvalError(EvalError::NameNotFound {
+                        kind: NameKind::Macro,
+                        name: s.to_string(),
+                    }),
+                })
+            }
+        }
         Expr::Binary { op, lhs, rhs } => {
             let mut l: EvalResult<'_>;
             let left: Value;
+            let right: Value;
 
             if !is_assign(*op) {
                 l = evaluate_expr(&lhs, variables, user_def_functions, functions)?;
@@ -100,16 +121,20 @@ pub fn evaluate_expr<'a>(
                 left = Value::Boolean(false); // dummy
             }
 
-            let mut r = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
-            let right = (
-                match r.result_type() {
-                    EvalResultType::Value => r.as_value(),
-                    EvalResultType::Ref => r.as_ref().cloned(),
-                }
-            ).ok_or(Spanned {
-                span: expr.span,
-                data: Error::UnexpectedError,
-            })?;
+            if !is_cond(*op) {
+                let mut r = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
+                right = (
+                    match r.result_type() {
+                        EvalResultType::Value => r.as_value(),
+                        EvalResultType::Ref => r.as_ref().cloned(),
+                    }
+                ).ok_or(Spanned {
+                    span: expr.span,
+                    data: Error::UnexpectedError,
+                })?;
+            } else {
+                right = Value::Boolean(false); // dummy
+            }
 
             let result = (
                 match op {
@@ -119,11 +144,42 @@ pub fn evaluate_expr<'a>(
                     Operator::Binary(BinaryOp::Division) => div::apply(&left, &right),
                     Operator::Binary(BinaryOp::Modulo) => modulo::apply(&left, &right),
                     Operator::Binary(BinaryOp::Exponentiation) => exp::apply(&left, &right),
-                    Operator::Binary(BinaryOp::And) => and::apply(&left, &right),
-                    Operator::Binary(BinaryOp::Or) => or::apply(&left, &right),
                     Operator::Binary(BinaryOp::BitwiseAnd) => bit_and::apply(&left, &right),
                     Operator::Binary(BinaryOp::BitwiseOr) => bit_or::apply(&left, &right),
                     Operator::Binary(BinaryOp::BitwiseXor) => bit_xor::apply(&left, &right),
+
+                    Operator::Binary(BinaryOp::And) => {
+                        if let Some(Value::Boolean(b)) = left.promote(ValueType::Boolean) && !b {
+                            return Ok(EvalResult::Value(Value::Boolean(false)));
+                        }
+                        let mut r = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
+                        let right = (
+                            match r.result_type() {
+                                EvalResultType::Value => r.as_value(),
+                                EvalResultType::Ref => r.as_ref().cloned(),
+                            }
+                        ).ok_or(Spanned {
+                            span: expr.span,
+                            data: Error::UnexpectedError,
+                        })?;
+                        and::apply(&left, &right)
+                    }
+                    Operator::Binary(BinaryOp::Or) => {
+                        if let Some(Value::Boolean(b)) = left.promote(ValueType::Boolean) && b {
+                            return Ok(EvalResult::Value(Value::Boolean(true)));
+                        }
+                        let mut r = evaluate_expr(&rhs, variables, user_def_functions, functions)?;
+                        let right = (
+                            match r.result_type() {
+                                EvalResultType::Value => r.as_value(),
+                                EvalResultType::Ref => r.as_ref().cloned(),
+                            }
+                        ).ok_or(Spanned {
+                            span: expr.span,
+                            data: Error::UnexpectedError,
+                        })?;
+                        and::apply(&left, &right)
+                    }
 
                     Operator::Binary(BinaryOp::Assign) =>
                         match &(**lhs).data {
@@ -509,5 +565,15 @@ pub fn evaluate_expr<'a>(
                         data: Error::UnexpectedError,
                     }),
             }
+        Expr::Comma { exprs } => {
+            for i in 0..exprs.len() {
+                if i == exprs.len() - 1 {
+                    return evaluate_expr(&exprs[i], variables, user_def_functions, functions);
+                } else {
+                    let _ = evaluate_expr(&exprs[i], variables, user_def_functions, functions);
+                }
+            }
+            Err(Spanned { span: expr.span, data: Error::UnexpectedError })
+        }
     }
 }

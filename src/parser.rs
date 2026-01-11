@@ -51,6 +51,7 @@ impl<'a> Cursor<'a> {
 pub enum Expr {
     Value(Value),
     Identifier(String),
+    Macro(String),
     Unary {
         op: Operator,
         rhs: Box<Spanned<Expr>>,
@@ -59,6 +60,9 @@ pub enum Expr {
         op: Operator,
         lhs: Box<Spanned<Expr>>,
         rhs: Box<Spanned<Expr>>,
+    },
+    Comma {
+        exprs: Vec<Spanned<Expr>>,
     },
     Ternary {
         cond: Box<Spanned<Expr>>,
@@ -84,6 +88,12 @@ fn nud(cursor: &mut Cursor, t: &Spanned<Token>) -> Option<Spanned<Expr>> {
                 data: Expr::Identifier(s.clone()),
             }),
 
+        Token::Macro(s) =>
+            Some(Spanned {
+                span: t.span,
+                data: Expr::Macro(s.clone()),
+            }),
+
         Token::Operator(Operator::Binary(BinaryOp::Subtraction)) => {
             let rhs = parse_expression(cursor, 70)?;
             Some(Spanned {
@@ -107,7 +117,7 @@ fn nud(cursor: &mut Cursor, t: &Spanned<Token>) -> Option<Spanned<Expr>> {
         }
 
         Token::Operator(Operator::Grouping(GroupingOp::LeftParen)) => {
-            let e = parse_expression(cursor, 0)?;
+            let e: Spanned<Expr> = parse_expression(cursor, 0)?;
 
             if cursor.expect(&Token::Operator(Operator::Grouping(GroupingOp::RightParen))) {
                 Some(e)
@@ -143,7 +153,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
             let right = parse_expression(cursor, rbp)?;
 
             Some(Spanned {
-                span: t.span,
+                span: Span { start: left.span.start, end: right.span.end },
                 data: Expr::Binary {
                     op: Operator::Binary(op),
                     lhs: Box::new(left.clone()),
@@ -153,6 +163,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
         }
 
         Token::Operator(Operator::Grouping(GroupingOp::LeftParen)) => {
+            const COMMA_BP: u32 = 1;
             let mut args = Vec::new();
 
             if
@@ -163,7 +174,7 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
                     })
             {
                 loop {
-                    args.push(parse_expression(cursor, 0)?);
+                    args.push(parse_expression(cursor, COMMA_BP + 1)?);
 
                     if
                         cursor
@@ -186,12 +197,12 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
                         s.data == Token::Operator(Operator::Grouping(GroupingOp::RightParen))
                     })
             {
+                let rparen = cursor.peek().unwrap(); // before advance
+                let end = rparen.span.end;
                 cursor.advance(1);
+
                 Some(Spanned {
-                    span: Span {
-                        start: left.span.start,
-                        end: cursor.i,
-                    },
+                    span: Span { start: left.span.start, end },
                     data: Expr::Call {
                         func: Box::new(left.clone()),
                         args,
@@ -200,6 +211,35 @@ fn led(cursor: &mut Cursor, left: &Spanned<Expr>, t: &Spanned<Token>) -> Option<
             } else {
                 None
             }
+        }
+
+        Token::Operator(Operator::Grouping(GroupingOp::Comma)) => {
+            const COMMA_BP: u32 = 1;
+
+            let mut exprs = match &left.data {
+                Expr::Comma { exprs } => { exprs.clone() }
+                _ => vec![left.clone()],
+            };
+
+            exprs.push(parse_expression(cursor, COMMA_BP)?);
+
+            while
+                cursor
+                    .peek()
+                    .is_some_and(|t| {
+                        t.data == Token::Operator(Operator::Grouping(GroupingOp::Comma))
+                    })
+            {
+                cursor.advance(1);
+                exprs.push(parse_expression(cursor, COMMA_BP)?);
+            }
+
+            let end = exprs.last().unwrap().span.end;
+
+            Some(Spanned {
+                span: Span { start: exprs[0].span.start, end },
+                data: Expr::Comma { exprs },
+            })
         }
 
         Token::Operator(Operator::TernaryOp(TernaryOp::TernaryCond)) => {
@@ -233,6 +273,8 @@ fn starts_expression(t: &Spanned<Token>) -> bool {
     match t.data {
         | Token::Value(_)
         | Token::Identifier(_)
+        | Token::Macro(_)
+        | Token::Operator(Operator::Unary(UnaryOp::Not))
         | Token::Operator(Operator::Grouping(GroupingOp::LeftParen))
         | Token::Operator(Operator::Unary(UnaryOp::Negation))
         | Token::Operator(Operator::Unary(UnaryOp::BitwiseNot)) => true,
@@ -280,7 +322,7 @@ fn parse_expression(cursor: &mut Cursor, min_bp: u32) -> Option<Spanned<Expr>> {
 
 pub fn recompute_expr_span(expr: &mut Spanned<Expr>) {
     let new_span = match &mut expr.data {
-        Expr::Value(_) | Expr::Identifier(_) => expr.span,
+        Expr::Value(_) | Expr::Identifier(_) | Expr::Macro(_) => expr.span,
 
         Expr::Unary { rhs, .. } => {
             recompute_expr_span(rhs);
@@ -299,6 +341,16 @@ pub fn recompute_expr_span(expr: &mut Spanned<Expr>) {
             recompute_expr_span(statement2);
 
             Span::merge(&Span::merge(&cond.span, &statement1.span), &statement2.span)
+        }
+        Expr::Comma { exprs } => {
+            let mut span = expr.span;
+
+            for e in exprs {
+                recompute_expr_span(e);
+                span = Span::merge(&span, &e.span);
+            }
+
+            span
         }
 
         Expr::Call { func, args } => {
@@ -324,7 +376,6 @@ pub fn parse_string(s: &str, debug: bool) -> Result<Box<Spanned<Expr>>, Spanned<
     if debug {
         print_debug_tokens(&tokens);
     }
-    // println!("{:?}", tokens);
 
     let expr = parse_expression(&mut cursor, 0);
 
@@ -332,7 +383,7 @@ pub fn parse_string(s: &str, debug: bool) -> Result<Box<Spanned<Expr>>, Spanned<
         Some(mut e) => {
             recompute_expr_span(&mut e);
             if debug {
-                print_debug_expr(e.clone());
+                print_debug_expr(e.clone(), 0);
             }
             Ok(Box::from(e))
         }

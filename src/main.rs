@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::io::{ self, Write };
 
-use crate::debug::print_debug_vars;
+use crate::debug::{ print_debug_user_def_function, print_debug_vars };
 use crate::error::Error;
 use crate::evaluater::EvalResultType;
+use crate::parser::{ Expr, parse_string };
+use crate::span::Spanned;
 use crate::{ evaluater::evaluate_expr, value::Value };
 
 mod error;
@@ -25,7 +27,9 @@ fn print_error(src: &str, err: &span::Spanned<error::Error>) {
         error::Error::EvalError(err) => {
             println!("Evaluation Error: {}", error::eval_error::error_to_string(err.clone()));
         }
-        _ => {}
+        _ => {
+            println!("Unexpected Error");
+        }
     }
 
     const MAX_WIDTH: usize = 50;
@@ -73,10 +77,12 @@ enum CommandResult {
     None,
 }
 
-fn eval_command(
+fn eval_command<'a>(
     input: &String,
     vars: &mut HashMap<String, Value>,
-    _functions: &HashMap<String, Box<fn(&Vec<Value>) -> Result<Value, Error>>>
+    functions: &HashMap<String, fn(&Vec<Value>) -> Result<Value, error::Error>>,
+    user_def_functions: &'a mut HashMap<String, Box<Spanned<Expr>>>,
+    debug: bool
 ) -> CommandResult {
     if input.to_lowercase().starts_with("[exit]") {
         CommandResult::End
@@ -85,6 +91,35 @@ fn eval_command(
         CommandResult::Continue
     } else if input.to_lowercase().starts_with("[clear]") {
         vars.clear();
+        CommandResult::Continue
+    } else if input.to_lowercase().starts_with("[defs]") {
+        print_debug_user_def_function(&user_def_functions, debug);
+        CommandResult::Continue
+    } else if input.to_lowercase().starts_with("[def ") {
+        let command_end = input.find("]");
+        let names: String;
+        let expr_str: String;
+        match command_end {
+            Some(n) => {
+                names = input[5..n].trim_start().to_string();
+                expr_str = input[n + 1..].trim_start().to_string();
+            }
+            None => {
+                return CommandResult::None;
+            }
+        }
+
+        let expr = parse_string(&expr_str, debug);
+
+        if let Ok(expr_ok) = expr {
+            for name in names.split_whitespace() {
+                user_def_functions.insert(name.to_string(), expr_ok.clone());
+                println!("  MACRO(s) {{{}}} = {}", name, expr_str);
+            }
+        } else if let Err(err) = expr {
+            print_error(&expr_str, &err);
+        }
+
         CommandResult::Continue
     } else if input.to_lowercase().starts_with("[del]") {
         let v = input.split("]").collect::<Vec<&str>>();
@@ -102,16 +137,16 @@ fn eval_command(
 
 fn main() {
     let mut vars: HashMap<String, Value> = HashMap::new();
-    type Func = fn(&Vec<Value>) -> Result<Value, error::Error>;
-    let functions: HashMap<
-        String,
-        Box<fn(&Vec<Value>) -> Result<Value, error::Error>>
-    > = HashMap::from([
-        ("any".to_string(), Box::new(functions::any as Func)),
-        ("all".to_string(), Box::new(functions::all as Func)),
-        ("max".to_string(), Box::new(functions::max as Func)),
-        ("min".to_string(), Box::new(functions::min as Func)),
-        ("clamp".to_string(), Box::new(functions::clamp as Func)),
+    type Func = fn(&Vec<Value>) -> Result<Value, Error>;
+    let functions: HashMap<String, fn(&Vec<Value>) -> Result<Value, error::Error>> = HashMap::from([
+        ("to_bool".to_string(), functions::to_bool as Func),
+        ("to_int".to_string(), functions::to_int as Func),
+        ("to_float".to_string(), functions::to_float as Func),
+        ("any".to_string(), functions::any as Func),
+        ("all".to_string(), functions::all as Func),
+        ("max".to_string(), functions::max as Func),
+        ("min".to_string(), functions::min as Func),
+        ("clamp".to_string(), functions::clamp as Func),
     ]);
     let mut user_def_functions = HashMap::new();
 
@@ -122,21 +157,26 @@ fn main() {
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
 
-        let command_res = eval_command(&input, &mut vars, &functions);
+        let debug: bool;
+        if input.to_lowercase().starts_with("[debug]") {
+            debug = true;
+            input = input[7..].trim_start().to_string();
+        } else {
+            debug = false;
+        }
+
+        let command_res = eval_command(
+            &input,
+            &mut vars,
+            &functions,
+            &mut user_def_functions,
+            debug
+        );
 
         if command_res == CommandResult::Continue {
             continue;
         } else if command_res == CommandResult::End {
             break;
-        }
-
-        let debug: bool;
-
-        if input.to_lowercase().starts_with("[debug]") {
-            debug = true;
-            input = input[7..].to_string();
-        } else {
-            debug = false;
         }
 
         let res = parser::parse_string(input.as_str(), debug);
